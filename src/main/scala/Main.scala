@@ -3,14 +3,15 @@ import java.io.File
 import java.net.{URL, URLClassLoader}
 import java.nio.file.{Files, Paths}
 import java.util.Optional
-import sbt.internal.inc._
 import sbt.internal.inc.javac.JavaCompiler
+import sbt.internal.inc.{FileAnalysisStore => _, _}
 import sbt.internal.util.{ConsoleOut, MainAppender}
 import sbt.util.{Level, LogExchange}
+import scala.collection.JavaConverters._
 import scalaz.concurrent.Task
 import xsbti.compile.{ScalaInstance => _, _}
 
-class ChildFirstLoader(urls: Array[URL], parent: ClassLoader) extends URLClassLoader(urls, null) {
+private class ChildFirstLoader(urls: Array[URL], parent: ClassLoader) extends URLClassLoader(urls, null) {
   protected override def findClass(name: String): Class[_] =
     try super.findClass(name) catch { case _: ClassNotFoundException => parent.loadClass(name) }
 }
@@ -29,9 +30,10 @@ object Main {
     val libraryModule = Module("org.scala-lang", "scala-library")
     val interfaceModule = Module("org.scala-sbt", "compiler-interface")
 
+    // fetch dependencies
     val resolution = Resolution(
       Set(Dependency(bridgeModule, zincVersion), Dependency(compilerModule, scalaVersion)),
-      filter = Some(_.module != interfaceModule)
+      filter = Some(_.module != interfaceModule) // rather, share this with current classloader
     )
     val fetched = resolution.process
       .run(Fetch.from(Seq(Cache.ivy2Local, MavenRepository("https://repo1.maven.org/maven2")), Cache.fetch()))
@@ -44,9 +46,10 @@ object Main {
       }
       .unsafePerformSync.toMap
 
+    // configure scalac
     val compilerJars = fetched.values.toArray
     val scalaInstance = new ScalaInstance(
-      "2.11.12",
+      scalaVersion,
       new ChildFirstLoader(compilerJars.map(_.toURI.toURL), getClass.getClassLoader),
       null,
       fetched(libraryModule),
@@ -55,27 +58,28 @@ object Main {
       None
     )
 
+    // misc settings
     val compilerCache = new FreshCompilerCache()
     val reporter = new ManagedLoggedReporter(20, logger)
 
+    // set inputs and outputs
     val inputClasspath = Array(fetched(libraryModule))
-    val inputSources = Files.walk(Paths.get("example/src"))
-      .filter(_.toString.endsWith(".scala")).map[File](_.toFile)
-      .toArray(new Array[File](_))
-
+    val inputSources = Files.walk(Paths.get("example/src")).iterator.asScala
+      .collect { case file if file.toString.endsWith(".scala") => file.toFile }
+      .toArray
     val output = CompileOutput(new File("example/target"))
 
-    val store = xsbti.compile.FileAnalysisStore.getDefault(new File("example/zinc"))
-
-    val incrementalCompile = ZincUtil.defaultIncrementalCompiler
+    // handle persistence
+    val store = FileAnalysisStore.getDefault(new File("example/zinc"))
     val lookup = new PerClasspathEntryLookup {
       // load analysis files from other compilations
       def analysis(classpathEntry: File) = Optional.empty[CompileAnalysis]
       def definesClass(classpathEntry: File) = Locate.definesClass(classpathEntry)
     }
 
+    // compile
     val previous = store.get()
-    val result = incrementalCompile.compile(
+    val result = ZincUtil.defaultIncrementalCompiler.compile(
       ZincUtil.scalaCompiler(scalaInstance, fetched(bridgeModule)),
       JavaCompiler.local.getOrElse(JavaCompiler.fork(None)),
       inputSources.map(_.getAbsoluteFile),
