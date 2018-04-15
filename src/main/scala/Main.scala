@@ -1,6 +1,6 @@
 import coursier._
 import java.io.File
-import java.net.{URL, URLClassLoader}
+import java.net.URLClassLoader
 import java.nio.file.{Files, Paths}
 import java.util.Optional
 import sbt.internal.inc.javac.JavaCompiler
@@ -8,13 +8,9 @@ import sbt.internal.inc.{FileAnalysisStore => _, _}
 import sbt.internal.util.{ConsoleOut, MainAppender}
 import sbt.util.{Level, LogExchange}
 import scala.collection.JavaConverters._
+import scala.util.Properties
 import scalaz.concurrent.Task
 import xsbti.compile.{ScalaInstance => _, _}
-
-private class ChildFirstLoader(urls: Array[URL], parent: ClassLoader) extends URLClassLoader(urls, null) {
-  protected override def findClass(name: String): Class[_] =
-    try super.findClass(name) catch { case _: ClassNotFoundException => parent.loadClass(name) }
-}
 
 object Main {
   private[this] val zincVersion = "1.1.3"
@@ -57,10 +53,10 @@ object Main {
       .unsafePerformSync.toMap
 
     // configure scalac
-    val compilerJars = fetched.values.toArray
+    val compilerJars = fetched.collect { case (module, file) if module.organization == "org.scala-lang" => file }.toArray
     val scalaInstance = new ScalaInstance(
       scalaVersion,
-      new ChildFirstLoader(compilerJars.map(_.toURI.toURL), getClass.getClassLoader),
+      new URLClassLoader(compilerJars.map(_.toURI.toURL), null),
       null,
       fetched(libraryModule),
       fetched(compilerModule),
