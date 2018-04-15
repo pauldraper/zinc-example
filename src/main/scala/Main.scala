@@ -17,14 +17,23 @@ private class ChildFirstLoader(urls: Array[URL], parent: ClassLoader) extends UR
 }
 
 object Main {
-  private[this] val scalaBinaryVersion = "2.11"
-  private[this] val scalaVersion = "2.11.12"
   private[this] val zincVersion = "1.1.3"
 
   private[this] val logger = LogExchange.logger("compile")
   LogExchange.bindLoggerAppenders(logger.name, List(MainAppender.defaultScreen(ConsoleOut.systemOut) -> Level.Info))
 
   def main(args: Array[String]): Unit = {
+    val scalaVersion = args match {
+      case Array(scalaVersion) => scalaVersion
+      case _ =>
+        logger.info(s"No Scala version specified; defaulting to ${Properties.versionNumberString}")
+        Properties.versionNumberString
+    }
+    // real implementation in librarymanagement-core
+    val scalaBinaryVersion =
+      if (scalaVersion.matches(raw"\d+.\d+.\d+")) scalaVersion.split('.').dropRight(1).mkString(".")
+      else scalaVersion
+
     val bridgeModule = Module("org.scala-sbt", s"compiler-bridge_$scalaBinaryVersion")
     val compilerModule = Module("org.scala-lang", "scala-compiler")
     val libraryModule = Module("org.scala-lang", "scala-library")
