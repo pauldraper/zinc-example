@@ -40,6 +40,7 @@ object Main {
     val interfaceModule = Module("org.scala-sbt", "compiler-interface")
 
     // fetch dependencies
+    // note: zinc-ivy-integration can do this too; this example is more explicit about dep fetching
     val resolution = Resolution(
       Set(Dependency(bridgeModule, zincVersion), Dependency(compilerModule, scalaVersion)),
       filter = Some(_.module != interfaceModule) // rather, share this with current classloader
